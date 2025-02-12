@@ -1,6 +1,6 @@
 const express = require("express");
 const net = require("net");
-const fetch = require("node-fetch");
+const fetch = globalThis.fetch || require("node-fetch");
 
 const app = express();
 
@@ -13,9 +13,8 @@ async function getMXRecords(domain) {
         const data = await response.json();
 
         if (data.Answer && data.Answer.length > 0) {
-            const mxRecords = data.Answer.map(record => record.data);
-            console.log(`✅ MX Records Found for ${domain}:`, mxRecords);
-            return mxRecords; // List of MX servers
+            console.log(`✅ MX Records Found for ${domain}:`, data.Answer.map(record => record.data));
+            return data.Answer.map(record => record.data); // List of MX servers
         } else {
             console.log(`❌ No MX Records Found for ${domain}`);
             return null;
@@ -33,7 +32,8 @@ async function verifyEmailSMTP(email) {
         const mxRecords = await getMXRecords(domain);
 
         if (!mxRecords || mxRecords.length === 0) {
-            return resolve(false); // No MX records → invalid email
+            console.log("❌ No MX records found, email is invalid.");
+            return resolve(false);
         }
 
         const smtpServer = mxRecords[0].split(" ")[1]; // Extract mail server address
@@ -42,7 +42,7 @@ async function verifyEmailSMTP(email) {
         const client = net.createConnection(587, smtpServer, () => {
             console.log(`✅ Connected to ${smtpServer} on port 587`);
             client.write("HELO mydomain.com\r\n"); // Fake domain
-            client.write(`MAIL FROM:<test@mydomain.com>\r\n`);
+            client.write("MAIL FROM:<test@mydomain.com>\r\n");
             client.write(`RCPT TO:<${email}>\r\n`);
             client.write("QUIT\r\n");
         });
