@@ -1,43 +1,35 @@
+require("dotenv").config();
 const express = require("express");
 const nodemailer = require("nodemailer");
 
 const app = express();
 
-// Setup SMTP Transport with Mailgun
+// Use console.log to check if env variables are loaded
+console.log("MAILGUN SMTP User:", process.env.MAILGUN_SMTP_USER);
+console.log("MAILGUN SMTP Pass:", process.env.MAILGUN_SMTP_PASS);
+
 const transporter = nodemailer.createTransport({
     host: "smtp.mailgun.org",
-    port: 587, // Use 587 (STARTTLS) or 465 (SSL)
-    secure: false, // STARTTLS enabled
+    port: 587,
+    secure: false,
     auth: {
-        user: process.env.MAILGUN_SMTP_USER, // Mailgun SMTP username
-        pass: process.env.MAILGUN_SMTP_PASS, // Mailgun SMTP password
+        user: process.env.MAILGUN_SMTP_USER,
+        pass: process.env.MAILGUN_SMTP_PASS,
     },
 });
 
-// Function to verify email via SMTP handshake
 async function verifyEmail(email) {
     try {
-        let testResult = await transporter.verify();
-        console.log("✅ SMTP Connection Successful:", testResult);
+        const result = await transporter.verify();
+        console.log("✅ SMTP Connection Successful:", result);
 
-        const testMailOptions = {
-            from: "verify@yourdomain.com",
-            to: email,
-            subject: "Test Email",
-            text: "This is a test email to check SMTP connectivity.",
-        };
-
-        // Try sending an email (won't actually deliver)
-        await transporter.sendMail(testMailOptions);
-        console.log(`✅ Email "${email}" is valid`);
-        return true;
+        return true; // SMTP is working
     } catch (error) {
-        console.log(`❌ Email "${email}" is invalid or blocked.`);
-        return false;
+        console.log("❌ SMTP Error:", error);
+        return false; // SMTP failed
     }
 }
 
-// API Endpoint
 app.get("/verify", async (req, res) => {
     const email = req.query.email;
     if (!email) {
@@ -48,8 +40,7 @@ app.get("/verify", async (req, res) => {
     res.json({ email, valid: isValid });
 });
 
-// Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
+    console.log(`🚀 Server running on port ${PORT}`);
 });
