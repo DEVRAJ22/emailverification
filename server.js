@@ -1,6 +1,5 @@
 const net = require("net");
 const express = require("express");
-const fetch = require("node-fetch");
 
 const app = express();
 
@@ -9,7 +8,7 @@ async function checkMXRecords(domain) {
     const dnsApiUrl = `https://dns.google/resolve?name=${domain}&type=MX`;
 
     try {
-        const response = await fetch(dnsApiUrl, { method: "GET" });
+        const response = await fetch(dnsApiUrl); // No need for node-fetch
         if (response.ok) {
             const data = await response.json();
             if (data.Answer && data.Answer.length > 0) {
