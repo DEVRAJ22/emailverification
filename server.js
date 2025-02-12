@@ -1,39 +1,71 @@
 const express = require("express");
-const nodemailer = require("nodemailer");
+const net = require("net");
+const fetch = require("node-fetch");
 
 const app = express();
 
-// Configure SMTP Transporter (Gmail Example)
-const transporter = nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 587, // Gmail SMTP port
-    secure: false, // Use STARTTLS
-    auth: {
-        user: process.env.SMTP_USER, // Your Gmail
-        pass: process.env.SMTP_PASS, // App Password (not your Gmail password)
-    },
-    tls: {
-        rejectUnauthorized: false,
-    },
-});
+// Function to check MX records via Google DNS API
+async function getMXRecords(domain) {
+    const dnsApiUrl = `https://dns.google/resolve?name=${domain}&type=MX`;
+
+    try {
+        const response = await fetch(dnsApiUrl);
+        const data = await response.json();
+
+        if (data.Answer && data.Answer.length > 0) {
+            const mxRecords = data.Answer.map(record => record.data);
+            console.log(`✅ MX Records Found for ${domain}:`, mxRecords);
+            return mxRecords; // List of MX servers
+        } else {
+            console.log(`❌ No MX Records Found for ${domain}`);
+            return null;
+        }
+    } catch (error) {
+        console.error("❌ DNS Lookup Error:", error.message);
+        return null;
+    }
+}
 
 // Function to verify email via SMTP handshake
-async function verifyEmail(email) {
-    try {
-        const testMailOptions = {
-            from: process.env.SMTP_USER,
-            to: email,
-            subject: "Test Email Verification",
-            text: "This is a test email to verify if the address is valid.",
-        };
+async function verifyEmailSMTP(email) {
+    return new Promise(async (resolve) => {
+        const domain = email.split("@")[1];
+        const mxRecords = await getMXRecords(domain);
 
-        await transporter.sendMail(testMailOptions);
-        console.log(`✅ Email ${email} is valid`);
-        return true; // Email is valid
-    } catch (error) {
-        console.error(`❌ SMTP Error for ${email}:`, error.message);
-        return false; // Email is invalid
-    }
+        if (!mxRecords || mxRecords.length === 0) {
+            return resolve(false); // No MX records → invalid email
+        }
+
+        const smtpServer = mxRecords[0].split(" ")[1]; // Extract mail server address
+        console.log(`📡 Trying SMTP Handshake with: ${smtpServer}`);
+
+        const client = net.createConnection(587, smtpServer, () => {
+            console.log(`✅ Connected to ${smtpServer} on port 587`);
+            client.write("HELO mydomain.com\r\n"); // Fake domain
+            client.write(`MAIL FROM:<test@mydomain.com>\r\n`);
+            client.write(`RCPT TO:<${email}>\r\n`);
+            client.write("QUIT\r\n");
+        });
+
+        client.on("data", (data) => {
+            const response = data.toString();
+            console.log("📩 SMTP Response:", response);
+
+            if (response.includes("250")) {
+                resolve(true); // Email is valid
+            } else {
+                resolve(false); // Email is invalid
+            }
+            client.end();
+        });
+
+        client.on("error", (err) => {
+            console.error("❌ SMTP Error:", err.message);
+            resolve(false);
+        });
+
+        client.on("end", () => console.log("📤 Connection closed"));
+    });
 }
 
 // API Endpoint
@@ -43,7 +75,7 @@ app.get("/verify", async (req, res) => {
         return res.json({ success: false, error: "Email is required" });
     }
 
-    const isValid = await verifyEmail(email);
+    const isValid = await verifyEmailSMTP(email);
     res.json({ email, valid: isValid });
 });
 
