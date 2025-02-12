@@ -1,66 +1,75 @@
 const net = require("net");
-const dns = require("dns");
+const express = require("express");
+const fetch = require("node-fetch");
 
-dns.setServers(["8.8.8.8", "8.8.4.4"]); // Use Google's Public DNS
+const app = express();
 
-// Function to get the mail server (MX record)
-function getMXRecords(domain, callback) {
-    dns.resolveMx(domain, (err, addresses) => {
-        if (err || !addresses.length) {
-            console.error(`No MX records found for: ${domain}`);
-            return callback(null);
+// Function to perform DNS MX record lookup using Google DNS API
+async function checkMXRecords(domain) {
+    const dnsApiUrl = `https://dns.google/resolve?name=${domain}&type=MX`;
+
+    try {
+        const response = await fetch(dnsApiUrl, { method: "GET" });
+        if (response.ok) {
+            const data = await response.json();
+            if (data.Answer && data.Answer.length > 0) {
+                const mxRecords = data.Answer.map(record => record.data);
+                console.log(`✅ MX Records Found for ${domain}:`, mxRecords);
+                return mxRecords; // List of MX records
+            } else {
+                console.log(`❌ No MX Records Found for ${domain}`);
+                return null;
+            }
+        } else {
+            console.log("❌ DNS API Error");
+            return null;
         }
-        console.log(`MX records for ${domain}:`, addresses);
-
-        // Select the mail server with the highest priority
-        const mxServer = addresses.sort((a, b) => a.priority - b.priority)[0].exchange;
-        console.log(`Using mail server: ${mxServer}`);
-        callback(mxServer);
-    });
+    } catch (error) {
+        console.error("❌ DNS Lookup Error:", error);
+        return null;
+    }
 }
 
 // Function to verify email using SMTP handshake
-function verifyEmail(email, callback) {
+async function verifyEmail(email, callback) {
     const domain = email.split("@")[1];
 
-    getMXRecords(domain, (smtpServer) => {
-        if (!smtpServer) {
-            return callback(false); // No MX record found
+    const mxRecords = await checkMXRecords(domain);
+    if (!mxRecords || mxRecords.length === 0) {
+        return callback(false); // No MX record found
+    }
+
+    const smtpServer = mxRecords[0].split(" ")[1]; // Extract mail server address
+    console.log(`📡 Using Mail Server: ${smtpServer}`);
+
+    const client = net.createConnection(25, smtpServer, () => {
+        console.log(`✅ Connected to ${smtpServer} on port 25`);
+        client.write("HELO mydomain.com\r\n"); // Fake domain
+        client.write(`MAIL FROM:<check@mydomain.com>\r\n`);
+        client.write(`RCPT TO:<${email}>\r\n`);
+        client.write("QUIT\r\n");
+    });
+
+    client.on("data", (data) => {
+        const response = data.toString();
+        console.log("📩 SMTP Response:", response);
+
+        if (response.includes("250")) {
+            callback(true); // Email exists
+        } else {
+            callback(false); // Email does not exist
         }
+        client.end();
+    });
 
-        // Connect to the mail server via SMTP
-        const client = net.createConnection(25, smtpServer, () => {
-            console.log(`Connected to ${smtpServer} on port 25`);
-            client.write("HELO mydomain.com\r\n"); // Fake domain
-            client.write(`MAIL FROM:<check@mydomain.com>\r\n`);
-            client.write(`RCPT TO:<${email}>\r\n`);
-            client.write("QUIT\r\n");
-        });
-
-        client.on("data", (data) => {
-            const response = data.toString();
-            console.log("SMTP Response:", response);
-
-            if (response.includes("250")) {
-                callback(true); // Email exists
-            } else {
-                callback(false); // Email does not exist
-            }
-            client.end();
-        });
-
-        client.on("error", (err) => {
-            console.error("SMTP Error:", err.message);
-            callback(false);
-        });
+    client.on("error", (err) => {
+        console.error("❌ SMTP Error:", err.message);
+        callback(false);
     });
 }
 
-// Simple API to check email
-const express = require("express");
-const app = express();
-
-app.get("/verify", (req, res) => {
+// API Endpoint
+app.get("/verify", async (req, res) => {
     const email = req.query.email;
     if (!email) {
         return res.json({ success: false, error: "Email is required" });
@@ -71,6 +80,8 @@ app.get("/verify", (req, res) => {
     });
 });
 
-app.listen(3000, () => {
-    console.log("Server running on http://localhost:3000");
+// Start server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
