@@ -1,46 +1,82 @@
-require("dotenv").config();
 const express = require("express");
-const nodemailer = require("nodemailer");
+const net = require("net");
+const dns = require("dns");
+const cors = require("cors");
+const bodyParser = require("body-parser");
 
 const app = express();
+app.use(cors());
+app.use(bodyParser.json());
 
-// Use console.log to check if env variables are loaded
-console.log("MAILGUN SMTP User:", process.env.MAILGUN_SMTP_USER);
-console.log("MAILGUN SMTP Pass:", process.env.MAILGUN_SMTP_PASS);
+app.post("/verify-email", async (req, res) => {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Email is required" });
 
-const transporter = nodemailer.createTransport({
-    host: "smtp.mailgun.org",
-    port: 587,
-    secure: false,
-    auth: {
-        user: process.env.MAILGUN_SMTP_USER,
-        pass: process.env.MAILGUN_SMTP_PASS,
-    },
+    try {
+        const result = await checkEmail(email);
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ error });
+    }
 });
 
-async function verifyEmail(email) {
-    try {
-        const result = await transporter.verify();
-        console.log("✅ SMTP Connection Successful:", result);
+async function checkEmail(email) {
+    const domain = email.split("@")[1];
 
-        return true; // SMTP is working
-    } catch (error) {
-        console.log("❌ SMTP Error:", error);
-        return false; // SMTP failed
-    }
+    return new Promise((resolve, reject) => {
+        dns.resolveMx(domain, (err, addresses) => {
+            if (err || !addresses || addresses.length === 0) {
+                return reject(`❌ No MX records found for ${domain}`);
+            }
+
+            addresses.sort((a, b) => a.priority - b.priority);
+            const mxHost = addresses[0].exchange;
+            console.log(`✅ Using mail server: ${mxHost}`);
+
+            const socket = net.createConnection(25, mxHost);
+            let timeout = setTimeout(() => {
+                socket.destroy();
+                reject("❌ Connection timeout.");
+            }, 10000);
+
+            socket.setEncoding("ascii");
+            let step = 0;
+
+            socket.on("data", (data) => {
+                console.log(`📩 SMTP Response: ${data}`);
+
+                if (data.includes("220") && step === 0) {
+                    step++;
+                    socket.write(`HELO example.com\r\n`);
+                } else if (data.includes("250") && step === 1) {
+                    step++;
+                    socket.write(`MAIL FROM:<test@example.com>\r\n`);
+                } else if (data.includes("250") && step === 2) {
+                    step++;
+                    socket.write(`RCPT TO:<${email}>\r\n`);
+                } else if (data.includes("550")) {
+                    clearTimeout(timeout);
+                    resolve({ success: false, message: `❌ Email ${email} does NOT exist.` });
+                    socket.end();
+                } else if (data.includes("250")) {
+                    clearTimeout(timeout);
+                    resolve({ success: true, message: `✅ Email ${email} can receive emails.` });
+                    socket.end();
+                }
+            });
+
+            socket.on("error", (error) => {
+                clearTimeout(timeout);
+                reject(`❌ Connection error: ${error.message}`);
+            });
+
+            socket.on("end", () => {
+                clearTimeout(timeout);
+                console.log("🔄 SMTP session ended.");
+            });
+        });
+    });
 }
 
-app.get("/verify", async (req, res) => {
-    const email = req.query.email;
-    if (!email) {
-        return res.json({ success: false, error: "Email is required" });
-    }
-
-    const isValid = await verifyEmail(email);
-    res.json({ email, valid: isValid });
-});
-
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-});
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server running on port ${PORT}`));
