@@ -20,6 +20,19 @@ app.post("/verify-email", async (req, res) => {
     }
 });
 
+app.get("/verify-email", async (req, res) => {
+    const email = req.query.email; // Get email from URL parameter
+    if (!email) return res.status(400).json({ error: "Email is required" });
+
+    try {
+        const result = await checkEmail(email);
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ error });
+    }
+});
+
+
 async function checkEmail(email) {
     const domain = email.split("@")[1];
 
