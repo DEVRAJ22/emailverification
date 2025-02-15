@@ -32,7 +32,6 @@ app.get("/verify-email", async (req, res) => {
     }
 });
 
-
 async function checkEmail(email) {
     const domain = email.split("@")[1];
 
@@ -90,6 +89,3 @@ async function checkEmail(email) {
         });
     });
 }
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server running on port ${PORT}`));
